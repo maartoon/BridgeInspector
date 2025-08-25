@@ -1,0 +1,14 @@
+# Generated files
+/build
+/app/build
+*.apk
+*.aab
+*.jar
+*.so
+*.swp
+*.iml
+
+# Local configuration
+/.idea
+/local.properties
+.DS_Store

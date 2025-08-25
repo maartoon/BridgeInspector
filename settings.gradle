@@ -1,0 +1,26 @@
+// settings.gradle  (Groovy DSL)
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    // keep Studio’s default line
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)   // or PREFER_PROJECT_REPOS
+
+    repositories {
+        google()
+        mavenCentral()
+
+        // DJI publishes the v5 AARs here
+        maven { url "https://djitools.sdk.cloud.dji.net" }
+    }
+}
+
+rootProject.name = "BridgeInspector"
+include ':app'
+include ':android-sdk-v5-uxsdk'
