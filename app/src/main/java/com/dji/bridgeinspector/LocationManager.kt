@@ -8,9 +8,9 @@ import dji.v5.manager.KeyManager
 import dji.v5.utils.common.LogUtils
 
 
-class DroneDataManager {
+class LocationManager {
 
-    private val TAG = "DroneDataManager
+    private val TAG = "LocationManager"
 
     // listen for drone updates
     fun startListening() {
