@@ -1,3 +1,4 @@
+import android.util.Log
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.CameraKey
 import dji.sdk.keyvalue.key.DJIKey
@@ -20,6 +21,28 @@ class LocationManager {
         // drone information - pitch, roll, yaw
         val attitudeKey = DJIKey.create(FlightControllerKey.KeyAircraftAttitude)
 
+        // debugging: checking for gps signal
+        val satelliteCountKey = DJIKey.create(FlightControllerKey.KeyGPSSatelliteCount)
+        val gpsSignalKey = DJIKey.create(FlightControllerKey.KeyGPSSignalLevel)
+
+        KeyManager.getInstance().listen(gpsSignalKey, this) { _, gpsSignal ->
+            Log.i(TAG, "GPS Signal: $gpsSignal")
+        }
+
+        KeyManager.getInstance().listen(satelliteCountKey, this) { _, satelliteCount ->
+            if (satelliteCount == null) {
+                Log.w(TAG, "Satellite count is null. GPS may still be initializing.")
+                return@listen
+            }
+
+            if (satelliteCount < 6) {
+                // Log an error if the satellite count is too low for a stable GPS lock
+                Log.e(TAG, "Poor GPS Signal. Satellites: $satelliteCount. Waiting for lock...")
+            } else {
+                Log.i(TAG, "Good GPS Signal. Satellites: $satelliteCount")
+            }
+        }
+
         // listen for location updates (provides old and new value, but we only care about new value)
         KeyManager.getInstance().listen(locationKey, this) { _, location ->
             location?.let {
@@ -28,7 +51,7 @@ class LocationManager {
                 val altitude = it.altitude
 
                 // log these values for testing, would want to process these values in the future
-                LogUtils.i(TAG, "Drone GPS: Lat: $latitude, Lon: $longitude, Alt: $altitude")
+                Log.i(TAG, "Drone GPS: Lat: $latitude, Lon: $longitude, Alt: $altitude")
             }
         }
 
@@ -40,14 +63,14 @@ class LocationManager {
                 val yaw = it.yaw
 
                 // log values for now
-                LogUtils.i(TAG, "Drone Attitude: Yaw: $yaw, Pitch: $pitch, Roll: $roll")
+                Log.i(TAG, "Drone Attitude: Yaw: $yaw, Pitch: $pitch, Roll: $roll")
             }
         }
     }
 
     // function to stop listening
     fun stopListening() {
-        KeyManager.getInstance().cancelListen(this)
+            KeyManager.getInstance().cancelListen(this)
     }
 
     // fetch camera intrinsics
@@ -61,12 +84,12 @@ class LocationManager {
                     // todo: derive fx, fy from focal length ranges; cx, cy
                     val focalLengthMin = it.minFocalLength
                     val focalLengthMax = it.maxFocalLength
-                    LogUtils.i(TAG, "Camera Focal Length Range: $focalLengthMin - $focalLengthMax")
+                    Log.i(TAG, "Camera Focal Length Range: $focalLengthMin - $focalLengthMax")
                 }
             }
 
             override fun onFailure(error: IDJIError) {
-                LogUtils.e(TAG, "Failed to get camera intrinsics: ${error.description()}")
+                Log.e(TAG, "Failed to get camera intrinsics: ${error.description()}")
             }
         })
     }
