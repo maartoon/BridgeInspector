@@ -42,9 +42,9 @@ def drone_to_camera(point_drone):
     """
     # Define the transformation matrix from drone to camera coordinates
     R_drone_to_camera = np.array([
-        [0, -1, 0],  # Camera x-axis is drone -y-axis
-        [0, 0, 1],  # Camera y-axis is drone z-axis
-        [1, 0, 0]  # Camera z-axis is drone x-axis
+        [0, 1, 0],   # Camera X is Drone Y
+        [0, 0, 1],   # Camera Y is Drone Z
+        [1, 0, 0]    # Camera Z is Drone X
     ])
     # Transform the point
     point_camera = R_drone_to_camera @ np.array(point_drone)
@@ -66,11 +66,12 @@ def camera_project(point_cam, fx, fy, cx, cy):
 if __name__ == "__main__":
     # Test: camera facing global x direction
 
-    yaw, pitch, roll = 100, 10, 0
+    yaw, pitch, roll = -177.2, 0.4, 4.4
     fx, fy = 800, 800
-    cx, cy = 0, 0
-    drone_lat, drone_lon, drone_alt = 40.105239, -88.285391, 54
-    target_lat, target_lon, target_alt = 40.105439, -88.285391, 54
+    screen_width, screen_height = 1920, 1080
+    cx, cy = screen_width / 2, screen_height / 2
+    drone_lat, drone_lon, drone_alt = 22.5428, 113.9589, 0
+    target_lat, target_lon, target_alt = 22.542795, 113.958801, -0.07
     target = gps_to_local(drone_lat, drone_lon, drone_alt, target_lat, target_lon, target_alt)
     point_drone = world_to_drone(target, yaw, pitch, roll)
     point_camera = drone_to_camera(point_drone)
@@ -78,3 +79,7 @@ if __name__ == "__main__":
     print("Camera frame coordinates:", point_camera)
     u, v = camera_project(point_camera, fx, fy, cx, cy)
     print(f"Pixel coordinates: (u, v) = ({u:.2f}, {v:.2f})")
+    print("Radius = ", 500 / point_camera[2])
+
+    # depth = point_camera.z
+    # radius = 500 / depth

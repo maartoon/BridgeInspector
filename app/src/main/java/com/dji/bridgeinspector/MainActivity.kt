@@ -31,8 +31,8 @@ open class MainActivity : AppCompatActivity() {
     private var primaryFpvWidget: FPVWidget? = null
 //    private var secondaryFpvWidget: FPVWidget? = null
     private var waypointWidget: WaypointOverlayWidget? = null
-    private var pos: PointF? = PointF(950f, 500f)
-
+//    private var pos: PointF? = PointF(515.80f, 34.10f)
+    private var pos: PointF? = PointF(1040.00f, 533.35f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
