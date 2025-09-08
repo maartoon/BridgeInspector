@@ -1,4 +1,5 @@
-import android.util.Log
+package com.dji.bridgeinspector
+
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.CameraKey
 import dji.sdk.keyvalue.key.DJIKey
@@ -6,12 +7,34 @@ import dji.sdk.keyvalue.value.camera.CameraOpticalZoomSpec
 import dji.v5.common.callback.CommonCallbacks
 import dji.v5.common.error.IDJIError
 import dji.v5.manager.KeyManager
-import dji.v5.utils.common.LogUtils
+import android.util.Log
 
+data class DroneData(
+    val latitude: Double,
+    val longitude: Double,
+    val altitude: Double,
+    val yaw: Double,
+    val pitch: Double,
+    val roll: Double
+)
+
+// 2. Add a listener interface
+interface DroneDataListener {
+    fun onDroneDataUpdated(data: DroneData)
+}
 
 class LocationManager {
 
-    private val TAG = "LocationManager"
+    private val TAG = "com.dji.bridgeinspector.LocationManager"
+
+    var listener: DroneDataListener? = null // Add a listener property
+
+    private var latestLatitude: Double? = null
+    private var latestLongitude: Double? = null
+    private var latestAltitude: Double? = null
+    private var latestYaw: Double? = null
+    private var latestPitch: Double? = null
+    private var latestRoll: Double? = null
 
     // listen for drone updates
     fun startListening() {
@@ -30,6 +53,7 @@ class LocationManager {
         }
 
         KeyManager.getInstance().listen(satelliteCountKey, this) { _, satelliteCount ->
+            Log.i(TAG, "Number of satellites = $satelliteCount")
             if (satelliteCount == null) {
                 Log.w(TAG, "Satellite count is null. GPS may still be initializing.")
                 return@listen
@@ -46,25 +70,42 @@ class LocationManager {
         // listen for location updates (provides old and new value, but we only care about new value)
         KeyManager.getInstance().listen(locationKey, this) { _, location ->
             location?.let {
-                val latitude = it.latitude
-                val longitude = it.longitude
-                val altitude = it.altitude
+                latestLatitude = it.latitude
+                latestLongitude = it.longitude
+                latestAltitude = it.altitude
+                publishData()
 
                 // log these values for testing, would want to process these values in the future
-                Log.i(TAG, "Drone GPS: Lat: $latitude, Lon: $longitude, Alt: $altitude")
+                Log.i(TAG, "Drone GPS: Lat: $latestLatitude, Lon: $latestLongitude, Alt: $latestAltitude")
             }
         }
 
         // listen for attitude updates
         KeyManager.getInstance().listen(attitudeKey, this) { _, attitude ->
             attitude?.let {
-                val pitch = it.pitch
-                val roll = it.roll
-                val yaw = it.yaw
+                latestYaw = it.yaw
+                latestPitch = it.pitch
+                latestRoll = it.roll
+                publishData()
 
                 // log values for now
-                Log.i(TAG, "Drone Attitude: Yaw: $yaw, Pitch: $pitch, Roll: $roll")
+                Log.i(TAG, "Drone Attitude: Yaw: $latestYaw, Pitch: $latestPitch, Roll: $latestRoll")
             }
+        }
+    }
+
+    private fun publishData() {
+        // Check if all data points are available
+        val lat = latestLatitude
+        val lon = latestLongitude
+        val alt = latestAltitude
+        val yaw = latestYaw
+        val pitch = latestPitch
+        val roll = latestRoll
+
+        if (lat != null && lon != null && alt != null && yaw != null && pitch != null && roll != null) {
+            val droneData = DroneData(lat, lon, alt, yaw, pitch, roll)
+            listener?.onDroneDataUpdated(droneData)
         }
     }
 
