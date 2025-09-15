@@ -20,7 +20,7 @@ data class DroneData(
 
 // 2. Add a listener interface
 interface DroneDataListener {
-    fun onDroneDataUpdated(data: DroneData)
+    fun onScreenCoordinatesUpdated(coords: ScreenCoordinates?)
 }
 
 class LocationManager {
@@ -96,29 +96,42 @@ class LocationManager {
     }
 
     private fun publishData() {
-        // Check if all data points are available
-        val lat = latestLatitude
-        val lon = latestLongitude
-        val alt = latestAltitude
+        val lat = latestLatitude?: 0.0
+        val lon = latestLongitude?: 0.0
+        val alt = latestAltitude?: 0.0
         val yaw = latestYaw
         val pitch = latestPitch
         val roll = latestRoll
 
         if (lat != null && lon != null && alt != null && yaw != null && pitch != null && roll != null) {
             val droneData = DroneData(lat, lon, alt, yaw, pitch, roll)
-            listener?.onDroneDataUpdated(droneData)
+
+            // TODO: implement multiple waypoint entries capability
+            val targetLat = 40.11526039934174
+            val targetLon = -88.22506985710966
+            val targetAlt = 0.0
+
+            // Camera intrinsics (replace with actual values)
+            val fx = 1385.6
+            val fy = 1385.6
+            val screenWidth = 1920.0
+            val screenHeight = 1080.0
+            val cx = screenWidth / 2
+            val cy = screenHeight / 2
+
+            // perform calulation using waypoint projection
+            val screenCoordinates = WaypointProjection.processDroneData(
+                droneData, targetLat, targetLon, targetAlt, fx, fy, cx, cy
+            )
+
+            // pass result to listener
+            if (screenCoordinates != null) {
+                Log.i(TAG, "Calculation successful: u=${screenCoordinates.u}, v=${screenCoordinates.v}, radius=${screenCoordinates.radius}")
+            } else {
+                Log.w(TAG, "Calculation failed. Point may be behind camera.")
+            }
+            listener?.onScreenCoordinatesUpdated(screenCoordinates)
         }
-        // Temporarily change this line for indoor testing
-//        if (yaw != null && pitch != null && roll != null) {
-//            // We need to handle the null GPS data. Let's send 0.0 for now.
-//            val currentLat = latestLatitude ?: 0.0
-//            val currentLon = latestLongitude ?: 0.0
-//            val currentAlt = latestAltitude ?: 0.0
-//
-//            Log.d(TAG, "Partial data available (Attitude only), calling listener.")
-//            val droneData = DroneData(currentLat, currentLon, currentAlt, yaw, pitch, roll)
-//            listener?.onDroneDataUpdated(droneData)
-//        }
     }
 
     // function to stop listening

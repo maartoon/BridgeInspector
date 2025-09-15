@@ -12,14 +12,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import android.graphics.PointF
 import kotlinx.coroutines.cancel
-import org.json.JSONObject
 
-open class MainActivity : AppCompatActivity(), DroneDataListener, WebSocketManager.WebSocketListener {
+open class MainActivity : AppCompatActivity(), DroneDataListener {
 
     private val TAG = "MainActivity"
 
     private lateinit var locationManager: LocationManager
-    private val webSocketManager = WebSocketManager()
     private var primaryFpvWidget: FPVWidget? = null
     private var waypointWidget: WaypointOverlayWidget? = null
 
@@ -27,9 +25,6 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, WebSocketManag
 
 
 
-//    private var secondaryFpvWidget: FPVWidget? = null
-//    private var pos: PointF? = PointF(515.80f, 34.10f)
-//    private var pos: PointF? = PointF(1040.00f, 533.35f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,10 +36,6 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, WebSocketManag
         locationManager.listener = this // Set MainActivity as the listener
 
         initUI()
-
-        // Setup WebSocket Manager with a listener
-        webSocketManager.listener = this
-        webSocketManager.connect("10.194.245.135")
 
         // Read location information using locationManager
         mainScope.launch {
@@ -74,36 +65,26 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, WebSocketManag
         super.onDestroy()
         // Clean up the listener when the activity is destroyed
         locationManager.stopListening()
-        webSocketManager.disconnect()
         mainScope.cancel() // Cancel the coroutine scope
     }
 
-    override fun onDroneDataUpdated(data: DroneData) {
-        Log.i(TAG, "onDroneDataUpdated: Preparing to send data via WebSocket.")
-        // Create JSON Object
-        val jsonObject = JSONObject().apply {
-            put("drone_lat", data.latitude)
-            put("drone_lon", data.longitude)
-            put("drone_alt", data.altitude)
-            put("yaw", data.yaw)
-            put("pitch", data.pitch)
-            put("roll", data.roll)
-        }
-        // Send data through the WebSocket
-        webSocketManager.sendMessage(jsonObject.toString())
-    }
-
-    override fun onMessage(point: Pair<Float, Float>, radius: Float) {
-        // Update the UI on the main thread
+    /**
+     * Receives the final calculated screen coordinates directly from LocationManager.
+     */
+    override fun onScreenCoordinatesUpdated(coords: ScreenCoordinates?) {
+        // calculation is done already, just need to update UI
         runOnUiThread {
-            waypointWidget?.update(PointF(point.first, point.second), radius)
-        }
-    }
-
-    override fun onConnectionError() {
-        // Handle connection errors, e.g., show a toast message
-        runOnUiThread {
-            Log.e(TAG, "WebSocket connection failed")
+            if (coords != null) {
+                // update waypoint overlay with correct coordinates and radius
+                val point = PointF(coords.u.toFloat(), coords.v.toFloat())
+                val radius = coords.radius.toFloat()
+                waypointWidget?.update(point, radius)
+                Log.d(TAG, "UI Updated with: u=${point.x}, v=${point.y}, radius=$radius")
+            } else {
+                // Optionally, hide the waypoint if the calculation fails (e.g., target is behind drone).
+                waypointWidget?.update(null, 0f)
+                Log.w(TAG, "Received null coordinates, hiding waypoint.")
+            }
         }
     }
 }
