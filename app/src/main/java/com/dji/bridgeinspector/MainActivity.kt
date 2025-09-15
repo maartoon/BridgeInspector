@@ -93,11 +93,10 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, WebSocketManag
         webSocketManager.sendMessage(jsonObject.toString())
     }
 
-    override fun onMessage(point: Pair<Float, Float>) {
-        // We received the calculated (u, v) point.
-        // Update the UI on the main thread.
+    override fun onMessage(point: Pair<Float, Float>, radius: Float) {
+        // Update the UI on the main thread
         runOnUiThread {
-            waypointWidget?.update(PointF(point.first, point.second))
+            waypointWidget?.update(PointF(point.first, point.second), radius)
         }
     }
 

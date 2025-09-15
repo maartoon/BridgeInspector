@@ -13,7 +13,7 @@ class WebSocketManager {
 
     // Define an interface for callbacks
     interface WebSocketListener {
-        fun onMessage(point: Pair<Float, Float>)
+        fun onMessage(point: Pair<Float, Float>, radius: Float)
         fun onConnectionError()
     }
 
@@ -32,7 +32,8 @@ class WebSocketManager {
                     val json = JSONObject(text)
                     val u = json.getDouble("u").toFloat()
                     val v = json.getDouble("v").toFloat()
-                    listener?.onMessage(Pair(u, v))
+                    val r = json.getDouble("radius").toFloat()
+                    listener?.onMessage(Pair(u, v), r)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing JSON", e)
                 }
@@ -56,7 +57,8 @@ class WebSocketManager {
         if (webSocket != null) {
             webSocket?.send(json)
         } else {
-            Log.w(TAG, "WebSocket is not connected. Message not sent.")
+            Log.w(TAG, "WebSocket is not connected. Message not sent. Reconnecting...")
+            connect("10.194.245.135")
         }
     }
 

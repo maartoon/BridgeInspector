@@ -25,7 +25,7 @@ interface DroneDataListener {
 
 class LocationManager {
 
-    private val TAG = "com.dji.bridgeinspector.LocationManager"
+    private val TAG = "LocationManager"
 
     var listener: DroneDataListener? = null // Add a listener property
 
@@ -49,7 +49,8 @@ class LocationManager {
         val gpsSignalKey = DJIKey.create(FlightControllerKey.KeyGPSSignalLevel)
 
         KeyManager.getInstance().listen(gpsSignalKey, this) { _, gpsSignal ->
-            Log.i(TAG, "GPS Signal: $gpsSignal")
+            Log.i(TAG, "GPS Sign" +
+                    "0al: $gpsSignal")
         }
 
         KeyManager.getInstance().listen(satelliteCountKey, this) { _, satelliteCount ->
@@ -107,6 +108,17 @@ class LocationManager {
             val droneData = DroneData(lat, lon, alt, yaw, pitch, roll)
             listener?.onDroneDataUpdated(droneData)
         }
+        // Temporarily change this line for indoor testing
+//        if (yaw != null && pitch != null && roll != null) {
+//            // We need to handle the null GPS data. Let's send 0.0 for now.
+//            val currentLat = latestLatitude ?: 0.0
+//            val currentLon = latestLongitude ?: 0.0
+//            val currentAlt = latestAltitude ?: 0.0
+//
+//            Log.d(TAG, "Partial data available (Attitude only), calling listener.")
+//            val droneData = DroneData(currentLat, currentLon, currentAlt, yaw, pitch, roll)
+//            listener?.onDroneDataUpdated(droneData)
+//        }
     }
 
     // function to stop listening
