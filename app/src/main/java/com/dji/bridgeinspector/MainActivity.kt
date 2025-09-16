@@ -5,12 +5,12 @@ import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import dji.sdk.keyvalue.value.common.ComponentIndexType
 import dji.v5.ux.core.widget.fpv.FPVWidget
-
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import android.graphics.PointF
+import com.dji.bridgeinspector.Legacy.ScreenCoordinates
 import kotlinx.coroutines.cancel
 
 open class MainActivity : AppCompatActivity(), DroneDataListener {

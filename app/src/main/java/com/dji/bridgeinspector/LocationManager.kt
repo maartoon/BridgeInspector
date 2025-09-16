@@ -8,6 +8,8 @@ import dji.v5.common.callback.CommonCallbacks
 import dji.v5.common.error.IDJIError
 import dji.v5.manager.KeyManager
 import android.util.Log
+import com.dji.bridgeinspector.Legacy.ScreenCoordinates
+import dji.sdk.keyvalue.key.GimbalKey.KeyGimbalAttitude
 
 data class DroneData(
     val latitude: Double,
@@ -43,6 +45,9 @@ class LocationManager {
 
         // drone information - pitch, roll, yaw
         val attitudeKey = DJIKey.create(FlightControllerKey.KeyAircraftAttitude)
+
+        // gimbal attitude information - pitch, roll, yaw
+        val gimbalAttitudeKey = DJIKey.create(KeyGimbalAttitude)
 
         // debugging: checking for gps signal
         val satelliteCountKey = DJIKey.create(FlightControllerKey.KeyGPSSatelliteCount)
@@ -81,8 +86,21 @@ class LocationManager {
             }
         }
 
-        // listen for attitude updates
+        // listen for attitude updates (REPLACED WITH GIMBAL ATTITUDE)
         KeyManager.getInstance().listen(attitudeKey, this) { _, attitude ->
+            attitude?.let {
+//                latestYaw = it.yaw
+//                latestPitch = it.pitch
+//                latestRoll = it.roll
+                publishData()
+
+                // log values for now
+                Log.i(TAG, "Drone Attitude: Yaw: $latestYaw")
+            }
+        }
+
+//         listen for gimbal attitude updates
+        KeyManager.getInstance().listen(gimbalAttitudeKey, this) { _, attitude ->
             attitude?.let {
                 latestYaw = it.yaw
                 latestPitch = it.pitch
@@ -90,7 +108,7 @@ class LocationManager {
                 publishData()
 
                 // log values for now
-                Log.i(TAG, "Drone Attitude: Yaw: $latestYaw, Pitch: $latestPitch, Roll: $latestRoll")
+                Log.i(TAG, "Gimbal Attitude: Pitch: $latestPitch, Roll: $latestRoll")
             }
         }
     }
@@ -111,7 +129,16 @@ class LocationManager {
             val targetLon = -88.22506985710966
             val targetAlt = 0.0
 
-            // Camera intrinsics (replace with actual values)
+//            // Camera intrinsics (replace with actual values)
+//            val sensorWidth = 17.3  // 4/3 sensor width
+//            val sensorHeight = 13.0  // 4/3 sensor height
+//            val focalLength = 12.3
+//
+//            val fx = (focalLength * 5280) / sensorWidth  // ≈ 3760 pixels
+//            val fy = (focalLength * 3956) / sensorHeight  // ≈ 3738 pixels
+//            val cx = 5280.0 / 2.0  // 2640
+//            val cy = 3956.0 / 2.0  // 1978
+
             val fx = 1385.6
             val fy = 1385.6
             val screenWidth = 1920.0
