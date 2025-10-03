@@ -121,7 +121,7 @@ object WaypointProjection {
         // NED(x, y, z) = (North, East, Down)
         // ENU(x, y, z) = (East, North, Up)
         // Therefore: NED_x = ENU_y, NED_y = ENU_x, NED_z = -ENU_z
-        return Point3D(-n, e, -u)
+        return Point3D(n, e, -u)
     }
 
     /**
