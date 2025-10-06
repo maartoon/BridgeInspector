@@ -11,6 +11,17 @@ import android.util.Log
 import com.dji.bridgeinspector.Legacy.ScreenCoordinates
 import dji.sdk.keyvalue.key.GimbalKey.KeyGimbalAttitude
 
+import com.google.ar.sceneform.math.Quaternion
+import com.google.ar.sceneform.math.Vector3
+
+// Jcoord library import for GPS to UTM conversion
+// The CORRECT Proj4J library imports
+import org.locationtech.proj4j.CRSFactory
+import org.locationtech.proj4j.CoordinateReferenceSystem
+import org.locationtech.proj4j.CoordinateTransform
+import org.locationtech.proj4j.CoordinateTransformFactory
+import org.locationtech.proj4j.ProjCoordinate
+
 data class DroneData(
     val latitude: Double,
     val longitude: Double,
@@ -25,11 +36,16 @@ interface DroneDataListener {
     fun onScreenCoordinatesUpdated(coords: ScreenCoordinates?)
 }
 
+interface SyntheticListener {
+    fun onCameraTransformUpdated(position: Vector3, rotation: Quaternion)
+}
+
 class LocationManager {
 
     private val TAG = "LocationManager"
 
     var listener: DroneDataListener? = null // Add a listener property
+    var syntheticListener: SyntheticListener? = null // Add a listener property
 
     private var latestLatitude: Double? = null
     private var latestLongitude: Double? = null
@@ -37,6 +53,17 @@ class LocationManager {
     private var latestYaw: Double? = null
     private var latestPitch: Double? = null
     private var latestRoll: Double? = null
+
+
+    // Proj4J Setup: Convert drone's GPS location to UTM coordinates
+    private val ctFactory = CoordinateTransformFactory()
+    private val csFactory = CRSFactory()
+    // Source CRS: WGS84 (standard GPS)
+    private val wgs84: CoordinateReferenceSystem = csFactory.createFromName("EPSG:4326")
+    // Target CRS: UTM Zone 16N
+    private val utm16n: CoordinateReferenceSystem = csFactory.createFromName("EPSG:32616")
+    private val wgsToUtm: CoordinateTransform = ctFactory.createTransform(wgs84, utm16n)
+    private val originUTM = doubleArrayOf(395893.73, 4441058.45, 194.46)
 
     // listen for drone updates
     fun startListening() {
@@ -54,8 +81,7 @@ class LocationManager {
         val gpsSignalKey = DJIKey.create(FlightControllerKey.KeyGPSSignalLevel)
 
         KeyManager.getInstance().listen(gpsSignalKey, this) { _, gpsSignal ->
-            Log.i(TAG, "GPS Sign" +
-                    "0al: $gpsSignal")
+            Log.i(TAG, "GPS Signal: $gpsSignal")
         }
 
         KeyManager.getInstance().listen(satelliteCountKey, this) { _, satelliteCount ->
@@ -121,23 +147,29 @@ class LocationManager {
         val pitch = latestPitch
         val roll = latestRoll
 
-        if (lat != null && lon != null && alt != null && yaw != null && pitch != null && roll != null) {
+        // Convert UTM location to the local coordinates of the model
+        if (syntheticListener != null) {
+            val droneUTM = gpsToUtm(lat, lon) // Placeholder
+
+            val cameraX = (droneUTM[0] - originUTM[0]).toFloat()
+            val cameraY = (droneUTM[1] - originUTM[1]).toFloat()
+            val cameraZ = (alt - originUTM[2]).toFloat()
+            val localPosition = Vector3(cameraX, cameraY, cameraZ)
+
+            val localRotation = Quaternion.eulerAngles(pitch?.let { yaw?.let { it1 -> roll?.let { it2 -> Vector3(it.toFloat(), it1.toFloat(), it2.toFloat()) } } })
+
+            // Notify the 3D listener
+            syntheticListener?.onCameraTransformUpdated(localPosition, localRotation)
+        }
+
+        // Pass information from drone for waypoint calculations
+        if (yaw != null && pitch != null && roll != null) {
             val droneData = DroneData(lat, lon, alt, yaw, pitch, roll)
 
             // TODO: implement multiple waypoint entries capability
             val targetLat = 40.11526039934174
             val targetLon = -88.22506985710966
             val targetAlt = 0.0
-
-//            // Camera intrinsics (replace with actual values)
-//            val sensorWidth = 17.3  // 4/3 sensor width
-//            val sensorHeight = 13.0  // 4/3 sensor height
-//            val focalLength = 12.3
-//
-//            val fx = (focalLength * 5280) / sensorWidth  // ≈ 3760 pixels
-//            val fy = (focalLength * 3956) / sensorHeight  // ≈ 3738 pixels
-//            val cx = 5280.0 / 2.0  // 2640
-//            val cy = 3956.0 / 2.0  // 1978
 
             val fx = 1385.6
             val fy = 1385.6
@@ -161,9 +193,22 @@ class LocationManager {
         }
     }
 
+    /**
+     * Converts WGS84 GPS coordinates (Latitude, Longitude) to UTM coordinates (Easting, Northing).
+     * Uses the Jcoord library to handle the conversion.
+     */
+    private fun gpsToUtm(lat: Double, lon: Double): DoubleArray {
+        // Proj4J uses (lon, lat) order for source coordinates
+        val srcCoord = ProjCoordinate(lon, lat)
+        val dstCoord = ProjCoordinate()
+        // Perform the transformation
+        wgsToUtm.transform(srcCoord, dstCoord)
+        return doubleArrayOf(dstCoord.x, dstCoord.y) // x is East, y is North
+    }
+
     // function to stop listening
     fun stopListening() {
-            KeyManager.getInstance().cancelListen(this)
+        KeyManager.getInstance().cancelListen(this)
     }
 
     // fetch camera intrinsics

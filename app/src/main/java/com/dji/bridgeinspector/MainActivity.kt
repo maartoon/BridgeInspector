@@ -10,20 +10,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import android.graphics.PointF
+import android.net.Uri
+import android.widget.Toast
 import com.dji.bridgeinspector.Legacy.ScreenCoordinates
 import kotlinx.coroutines.cancel
+import com.google.ar.sceneform.Node
+import com.google.ar.sceneform.SceneView
+import com.google.ar.sceneform.math.Quaternion
+import com.google.ar.sceneform.math.Vector3
+import com.google.ar.sceneform.rendering.ModelRenderable
 
-open class MainActivity : AppCompatActivity(), DroneDataListener {
+open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListener {
 
     private val TAG = "MainActivity"
 
     private lateinit var locationManager: LocationManager
     private var primaryFpvWidget: FPVWidget? = null
     private var waypointWidget: WaypointOverlayWidget? = null
+    private lateinit var sceneView: SceneView
 
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-
-
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,9 +39,11 @@ open class MainActivity : AppCompatActivity(), DroneDataListener {
         setContentView(R.layout.live_feed2)
 
         locationManager = LocationManager()
-        locationManager.listener = this // Set MainActivity as the listener
+        locationManager.listener = this
+        locationManager.syntheticListener = this
 
         initUI()
+        initSceneView()
 
         // Read location information using locationManager
         mainScope.launch {
@@ -59,6 +67,29 @@ open class MainActivity : AppCompatActivity(), DroneDataListener {
         waypointWidget = findViewById(R.id.waypoint)
         primaryFpvWidget?.updateVideoSource(ComponentIndexType.LEFT_OR_MAIN)
 //        waypointWidget?.update(pos)
+        sceneView = findViewById(R.id.sceneView)
+    }
+
+    private fun initSceneView() {
+        // Original Sceneform uses a builder with callbacks to load models
+        ModelRenderable.builder()
+            .setSource(this, Uri.parse("local_coord_mesh_building.obj"))
+            .setIsFilamentGltf(true)
+            .build()
+            .thenAccept { modelRenderable ->
+                // This code runs when the model has successfully loaded
+                val modelNode = Node()
+                modelNode.renderable = modelRenderable
+                // Add the model to the scene
+                sceneView.scene.addChild(modelNode)
+                Log.d(TAG, "3D Model loaded successfully.")
+            }
+            .exceptionally { throwable ->
+                // This code runs if the model fails to load
+                Log.e(TAG, "Unable to load 3D model", throwable)
+                Toast.makeText(this, "Error loading model", Toast.LENGTH_LONG).show()
+                null
+            }
     }
 
     override fun onDestroy() {
@@ -85,6 +116,14 @@ open class MainActivity : AppCompatActivity(), DroneDataListener {
                 waypointWidget?.update(null, 0f)
                 Log.w(TAG, "Received null coordinates, hiding waypoint.")
             }
+        }
+    }
+
+    override fun onCameraTransformUpdated(position: Vector3, rotation: Quaternion) {
+        runOnUiThread {
+            // Update the SceneView's camera to match the drone's real-world pose
+            sceneView.scene.camera.worldPosition = position
+            sceneView.scene.camera.worldRotation = rotation
         }
     }
 }
