@@ -148,7 +148,7 @@ class LocationManager {
         val roll = latestRoll
 
         // Convert UTM location to the local coordinates of the model
-        if (syntheticListener != null) {
+        if (syntheticListener != null && yaw != null && pitch != null && roll != null) {
             val droneUTM = gpsToUtm(lat, lon) // Placeholder
 
             val cameraX = (droneUTM[0] - originUTM[0]).toFloat()
@@ -156,7 +156,8 @@ class LocationManager {
             val cameraZ = (alt - originUTM[2]).toFloat()
             val localPosition = Vector3(cameraX, cameraY, cameraZ)
 
-            val localRotation = Quaternion.eulerAngles(pitch?.let { yaw?.let { it1 -> roll?.let { it2 -> Vector3(it.toFloat(), it1.toFloat(), it2.toFloat()) } } })
+            val localRotation = Quaternion.eulerAngles(Vector3(pitch.toFloat(), yaw.toFloat(), roll.toFloat()))
+
 
             // Notify the 3D listener
             syntheticListener?.onCameraTransformUpdated(localPosition, localRotation)
