@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -8,27 +7,29 @@
 
     <dji.v5.ux.core.widget.fpv.FPVWidget
         android:id="@+id/widget_primary_fpv"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:uxsdk_cameraNameTextSize="14dp"
-        app:uxsdk_cameraSideTextSize="14dp"
-        app:uxsdk_sourceCameraNameVisibility="true"
-        app:uxsdk_sourceCameraSideVisibility="true"
-        app:uxsdk_interactionEnabled="true" />
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
 
     <com.dji.bridgeinspector.WaypointOverlayWidget
         android:id="@+id/waypoint"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        android:layout_height="match_parent"/>
 
+    <com.google.ar.sceneform.SceneView
+        android:id="@+id/sceneView"
+        android:layout_width="250dp"
+        android:layout_height="150dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp" />
 
+    <Button
+        android:id="@+id/next_waypoint_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="16dp"
+        android:text="@string/next_viewpoint" />
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+</FrameLayout>

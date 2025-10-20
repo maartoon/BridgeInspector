@@ -22,6 +22,7 @@ import org.locationtech.proj4j.CoordinateTransform
 import org.locationtech.proj4j.CoordinateTransformFactory
 import org.locationtech.proj4j.ProjCoordinate
 
+// Data class to hold current drone information
 data class DroneData(
     val latitude: Double,
     val longitude: Double,
@@ -30,6 +31,22 @@ data class DroneData(
     val pitch: Double,
     val roll: Double
 )
+
+// Data class to hold all info for a single target
+data class TargetViewpoint(
+    val latitude: Double,
+    val longitude: Double,
+    val altitude: Double,
+    val yaw: Double,
+    val pitch: Double,
+    val roll: Double
+)
+
+// Enum to control synthetic camera behavior
+enum class SyntheticMode {
+    FOLLOW_DRONE,
+    STATIC_VIEWPOINT
+}
 
 // 2. Add a listener interface
 interface DroneDataListener {
@@ -47,6 +64,9 @@ class LocationManager {
     var listener: DroneDataListener? = null // Add a listener property
     var syntheticListener: SyntheticListener? = null // Add a listener property
 
+    var currentTarget: TargetViewpoint? = null // current target viewpoint for projection
+    var syntheticMode: SyntheticMode = SyntheticMode.FOLLOW_DRONE // current mode of synthetic camera
+
     private var latestLatitude: Double? = null
     private var latestLongitude: Double? = null
     private var latestAltitude: Double? = null
@@ -63,8 +83,7 @@ class LocationManager {
     // Target CRS: UTM Zone 16N
     private val utm16n: CoordinateReferenceSystem = csFactory.createFromName("EPSG:32616")
     private val wgsToUtm: CoordinateTransform = ctFactory.createTransform(wgs84, utm16n)
-    private val originUTM = doubleArrayOf(395893.73, 4441058.45, 194.46)
-
+    private val originUTM = doubleArrayOf(395535.05, 4441177.50, 5.0)
     // listen for drone updates
     fun startListening() {
         // gps information - lat, long, alt
@@ -125,7 +144,7 @@ class LocationManager {
             }
         }
 
-//         listen for gimbal attitude updates
+        // listen for gimbal attitude updates
         KeyManager.getInstance().listen(gimbalAttitudeKey, this) { _, attitude ->
             attitude?.let {
                 latestYaw = it.yaw
@@ -148,29 +167,39 @@ class LocationManager {
         val roll = latestRoll
 
         // Convert UTM location to the local coordinates of the model
-        if (syntheticListener != null && yaw != null && pitch != null && roll != null) {
+        // Synthetic video mode: camera's movement directly follows that of the drone
+        if (syntheticMode == SyntheticMode.FOLLOW_DRONE && syntheticListener != null && yaw != null && pitch != null && roll != null) {
             val droneUTM = gpsToUtm(lat, lon) // Placeholder
 
             val cameraX = (droneUTM[0] - originUTM[0]).toFloat()
             val cameraY = (droneUTM[1] - originUTM[1]).toFloat()
-            val cameraZ = (alt - originUTM[2]).toFloat()
+            val cameraZ = (alt + originUTM[2]).toFloat()
             val localPosition = Vector3(cameraX, cameraY, cameraZ)
 
-            val localRotation = Quaternion.eulerAngles(Vector3(pitch.toFloat(), yaw.toFloat(), roll.toFloat()))
-
+            // may need modification depending on the model
+            val localRotation = Quaternion.eulerAngles(Vector3(pitch.toFloat(), -yaw.toFloat(), roll.toFloat()))
+            val preRotation = Quaternion.axisAngle(Vector3.right(), 90f)
+            val finalRotation = Quaternion.multiply(preRotation, localRotation)
 
             // Notify the 3D listener
-            syntheticListener?.onCameraTransformUpdated(localPosition, localRotation)
+            syntheticListener?.onCameraTransformUpdated(localPosition, finalRotation)
         }
 
         // Pass information from drone for waypoint calculations
         if (yaw != null && pitch != null && roll != null) {
             val droneData = DroneData(lat, lon, alt, yaw, pitch, roll)
 
-            // TODO: implement multiple waypoint entries capability
-            val targetLat = 40.11526039934174
-            val targetLon = -88.22506985710966
-            val targetAlt = 0.0
+            // set target waypoint to current target
+            val target = currentTarget
+            if (target == null) {
+                Log.w(TAG, "No target viewpoint set. Waypoint projection skipped.")
+                listener?.onScreenCoordinatesUpdated(null) // Hide waypoint
+                return // No target, so skip calculation
+            }
+
+            val targetLat = target.latitude
+            val targetLon = target.longitude
+            val targetAlt = target.altitude
 
             val fx = 1385.6
             val fy = 1385.6
@@ -195,7 +224,42 @@ class LocationManager {
     }
 
     /**
-     * Converts WGS84 GPS coordinates (Latitude, Longitude) to UTM coordinates (Easting, Northing).
+     * Synthetic Image Feature
+     * Manually calculates and pushes a synthetic camera update based on the
+     * currentTarget's static position and orientation.
+     */
+    fun updateStaticSyntheticView() {
+        val target = currentTarget
+        if (target == null) {
+            Log.w(TAG, "Cannot update static synthetic view: currentTarget is null.")
+            return
+        }
+        if (syntheticListener == null) {
+            Log.w(TAG, "Cannot update static synthetic view: syntheticListener is null.")
+            return
+        }
+
+        Log.d(TAG, "Setting synthetic camera to static viewpoint: ${target.latitude}, ${target.longitude}")
+
+        val targetUTM = gpsToUtm(target.latitude, target.longitude)
+
+        val cameraX = (targetUTM[0] - originUTM[0]).toFloat()
+        val cameraY = (targetUTM[1] - originUTM[1]).toFloat()
+        // Use target's altitude for Z position in the synthetic world
+        val cameraZ = (target.altitude + originUTM[2]).toFloat()
+        val localPosition = Vector3(cameraX, cameraY, cameraZ)
+
+        // Use target's orientation
+        val localRotation = Quaternion.eulerAngles(Vector3(target.pitch.toFloat(), -target.yaw.toFloat(), target.roll.toFloat()))
+        val preRotation = Quaternion.axisAngle(Vector3.right(), 90f) // Keep the pre-rotation if it's needed for model orientation
+        val finalRotation = Quaternion.multiply(preRotation, localRotation)
+
+        // Notify the 3D listener to update the camera
+        syntheticListener?.onCameraTransformUpdated(localPosition, finalRotation)
+    }
+
+    /**
+     * Helper function to convert GPS coordinates to UTM coordinates
      * Uses the Jcoord library to handle the conversion.
      */
     private fun gpsToUtm(lat: Double, lon: Double): DoubleArray {
