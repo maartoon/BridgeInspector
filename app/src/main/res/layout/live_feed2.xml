@@ -5,10 +5,10 @@
     android:layout_height="match_parent"
     tools:context=".MainActivity">
 
-    <dji.v5.ux.core.widget.fpv.FPVWidget
-        android:id="@+id/widget_primary_fpv"
+    <VideoView
+        android:id="@+id/video_view"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"/>
+        android:layout_height="match_parent" />
 
     <com.dji.bridgeinspector.WaypointOverlayWidget
         android:id="@+id/waypoint"

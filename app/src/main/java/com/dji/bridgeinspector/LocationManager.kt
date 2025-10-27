@@ -13,6 +13,10 @@ import dji.sdk.keyvalue.key.GimbalKey.KeyGimbalAttitude
 
 import com.google.ar.sceneform.math.Quaternion
 import com.google.ar.sceneform.math.Vector3
+import dji.v5.manager.SDKManager
+import dji.v5.manager.aircraft.rtk.RTKCenter
+import dji.v5.manager.aircraft.rtk.RTKLocationInfo
+import dji.v5.manager.aircraft.rtk.RTKLocationInfoListener
 
 // Jcoord library import for GPS to UTM conversion
 // The CORRECT Proj4J library imports
@@ -74,6 +78,29 @@ class LocationManager {
     private var latestPitch: Double? = null
     private var latestRoll: Double? = null
 
+    /** Set up RTK Location listener, higher broadcast rate than KeyLocation3D **/
+    private val rtkLocationListener = RTKLocationInfoListener { rtkInfo ->
+        // This listener provides the high-frequency fused data
+        rtkInfo?.let {
+            // Get the fused location data
+            val fusedLocation = it.real3DLocation
+
+            if (fusedLocation == null) {
+                Log.w(TAG, "Fused location is null, skipping update.")
+                return@RTKLocationInfoListener
+            }
+
+            // Update latest location values
+            latestLatitude = fusedLocation.latitude
+            latestLongitude = fusedLocation.longitude
+            latestAltitude = fusedLocation.altitude
+
+            // Call publishData() to sync with the latest attitude
+            publishData()
+
+            Log.i(TAG, "Drone FUSED GPS: Lat: $latestLatitude, Lon: $latestLongitude, Alt: $latestAltitude")
+        }
+    }
 
     // Proj4J Setup: Convert drone's GPS location to UTM coordinates
     private val ctFactory = CoordinateTransformFactory()
@@ -86,9 +113,6 @@ class LocationManager {
     private val originUTM = doubleArrayOf(395535.05, 4441177.50, 5.0)
     // listen for drone updates
     fun startListening() {
-        // gps information - lat, long, alt
-        val locationKey = DJIKey.create(FlightControllerKey.KeyAircraftLocation3D)
-
         // drone information - pitch, roll, yaw
         val attitudeKey = DJIKey.create(FlightControllerKey.KeyAircraftAttitude)
 
@@ -119,18 +143,16 @@ class LocationManager {
         }
 
         // listen for location updates (provides old and new value, but we only care about new value)
-        KeyManager.getInstance().listen(locationKey, this) { _, location ->
-            location?.let {
-                latestLatitude = it.latitude
-                latestLongitude = it.longitude
-                latestAltitude = it.altitude
-                publishData()
+        val rtkCenter = RTKCenter() 
 
-                // log these values for testing, would want to process these values in the future
-                Log.i(TAG, "Drone GPS: Lat: $latestLatitude, Lon: $latestLongitude, Alt: $latestAltitude")
-            }
+        if (rtkCenter == null) {
+            Log.e(TAG, "RTKCenter is not available. Using fallback KeyAircraftLocation3D.")
+            // TODO: Add fallback listener here if needed
+        } else {
+            // Add the listener
+            rtkCenter.addRTKLocationInfoListener(rtkLocationListener)
+            Log.i(TAG, "RTKLocationInfoListener added.")
         }
-
         // listen for attitude updates (REPLACED WITH GIMBAL ATTITUDE)
         KeyManager.getInstance().listen(attitudeKey, this) { _, attitude ->
             attitude?.let {

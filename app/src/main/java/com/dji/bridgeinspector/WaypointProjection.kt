@@ -7,6 +7,10 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+// --- ADD SCENEFORM IMPORTS ---
+import com.google.ar.sceneform.math.Quaternion
+import com.google.ar.sceneform.math.Vector3
+
 // Data class for a 3D point/vector for better readability
 data class Point3D(val x: Double, val y: Double, val z: Double) {
     // Allows accessing components by index like an array
@@ -34,6 +38,7 @@ data class Point2D(val u: Double, val v: Double)
  * A utility object for matrix and vector operations.
  */
 object MatrixHelper {
+    // ... (multiply functions remain unchanged) ...
     /**
      * Multiplies a 3x3 matrix by a 3D vector.
      */
@@ -71,10 +76,9 @@ object WaypointProjection {
     private const val WGS84_A = 6378137.0 // Semi-major axis
     private const val WGS84_F = 1.0 / 298.257223563 // Flattening
 
-    /**
-     * Converts Geodetic coordinates (latitude, longitude, altitude) to
-     * Earth-Centered, Earth-Fixed (ECEF) coordinates.
-     */
+    // --- (geodeticToEcef, gpsToLocal, worldToDrone, droneToCamera, cameraProject) ---
+    // --- All your original functions remain here, unchanged ---
+
     private fun geodeticToEcef(lat: Double, lon: Double, alt: Double): Point3D {
         val latRad = Math.toRadians(lat)
         val lonRad = Math.toRadians(lon)
@@ -88,11 +92,6 @@ object WaypointProjection {
         return Point3D(x, y, z)
     }
 
-    /**
-     * Converts a target's GPS coordinates to a local East-North-Up (ENU) frame
-     * relative to the drone's position.
-     * @return A Point3D representing the target's position in the local ENU frame (x=East, y=North, z=Up).
-     */
     fun gpsToLocal(
         droneLat: Double, droneLon: Double, droneAlt: Double,
         targetLat: Double, targetLon: Double, targetAlt: Double
@@ -117,20 +116,9 @@ object WaypointProjection {
         val n = -sLat * cLon * diff.x - sLat * sLon * diff.y + cLat * diff.z
         val u = cLat * cLon * diff.x + cLat * sLon * diff.y + sLat * diff.z
 
-        // Convert ENU to NED
-        // NED(x, y, z) = (North, East, Down)
-        // ENU(x, y, z) = (East, North, Up)
-        // Therefore: NED_x = ENU_y, NED_y = ENU_x, NED_z = -ENU_z
         return Point3D(n, e, -u)
     }
 
-    /**
-     * Transforms a point from the world ENU frame to the drone's local frame.
-     * The drone's frame is typically X-forward, Y-right, Z-down.
-     * @param target The point in the world (ENU) frame.
-     * @param yaw, pitch, roll The drone's orientation in degrees.
-     * @return The point in the drone's coordinate frame.
-     */
     fun worldToDrone(target: Point3D, yaw: Double, pitch: Double, roll: Double): Point3D {
         val y = Math.toRadians(-yaw)
         val p = Math.toRadians(-pitch)
@@ -166,32 +154,13 @@ object WaypointProjection {
         return MatrixHelper.multiply(rCombined, target)
     }
 
-    /**
-     * Transforms a point from the drone's frame to the camera's frame.
-     * Drone: X-forward, Y-right, Z-down
-     * Camera: X-right, Y-down, Z-forward
-     * @param pointDrone The point in the drone's coordinate frame.
-     * @return The point in the camera's coordinate frame.
-     */
     fun droneToCamera(pointDrone: Point3D): Point3D {
-        // This matrix swaps axes from drone to camera coordinates:
-        // Camera X = Drone Y
-        // Camera Y = Drone Z
-        // Camera Z = Drone X
         return Point3D(pointDrone.y, pointDrone.z, pointDrone.x)
     }
 
-    /**
-     * Projects a 3D point from the camera frame to 2D pixel coordinates.
-     * @param pointCam The 3D point in the camera's frame.
-     * @param fx, fy The camera's focal lengths in pixels.
-     * @param cx, cy The camera's principal point (image center) in pixels.
-     * @return The 2D pixel coordinates (u, v).
-     */
     fun cameraProject(pointCam: Point3D, fx: Double, fy: Double, cx: Double, cy: Double): Point2D? {
         val (xc, yc, zc) = pointCam
         if (zc <= 0.0) {
-//            Log.i(TAG, "Zc is negative. Cannot project.")
             return null
         }
         val u = fx * xc / zc + cx
@@ -209,34 +178,93 @@ object WaypointProjection {
         cx: Double,
         cy: Double
     ): ScreenCoordinates? {
-        // convert target's GPS to local ENU frame relative to the drone
         val targetLocal = gpsToLocal(
             droneData.latitude, droneData.longitude, droneData.altitude,
             targetLat, targetLon, targetAlt
         )
-
-        // transform local ENU frame to drone's body frame
         val pointDrone = worldToDrone(
             targetLocal, droneData.yaw, droneData.pitch, droneData.roll
         )
-
-        // transform drone body frame to camera frame
         val pointCamera = droneToCamera(pointDrone)
-
-        // project 3D camera point to 2D screen coordinates
         val screenCoords = cameraProject(
             pointCamera,
             fx,
             fy,
             cx,
             cy
-        ) ?: return null // return null if projection fails
-
-        // calculate the radius based on depth (Zc), with a minimum value
-        val zc = pointCamera[2] // Z coordinate in camera frame is depth
+        ) ?: return null
+        val zc = pointCamera[2]
         val radius = maxOf(10.0, 500.0 / zc)
         Log.i(TAG, "Screen Coordinates: ${screenCoords.u}, ${screenCoords.v}, ${radius}")
-
         return ScreenCoordinates(u = screenCoords.u, v = screenCoords.v, radius = radius)
+    }
+
+    // --- ADD HELPER FUNCTIONS / EXTENSIONS ---
+
+    /** Converts our Point3D to Sceneform's Vector3 */
+    private fun Point3D.toVector3(): Vector3 {
+        return Vector3(this.x.toFloat(), this.y.toFloat(), this.z.toFloat())
+    }
+
+    /** Helper for Point3D subtraction */
+    private fun Point3D.subtract(other: Point3D): Point3D {
+        return Point3D(this.x - other.x, this.y - other.y, this.z - other.z)
+    }
+
+    // --- ADD THE NEW PROJECTION FUNCTION ---
+
+    /**
+     * Projects a 3D point from the *world* coordinate system to 2D pixel coordinates,
+     * given a camera's pose in that same world.
+     *
+     * @param cameraPosition The camera's (x,y,z) in the world
+     * @param cameraRotation The camera's rotation in the world
+     * @param targetWorldPosition The target's (x,y,z) in the world
+     * @return The 2D screen coordinates, or null if the point is behind the camera.
+     */
+    fun projectWorldToScreen(
+        cameraPosition: Point3D,
+        cameraRotation: Quaternion,
+        targetWorldPosition: Point3D,
+        fx: Double, fy: Double, cx: Double, cy: Double
+    ): ScreenCoordinates? {
+
+        // 1. Find target's position relative to the camera in world space
+        val targetRelativeWorld = targetWorldPosition.subtract(cameraPosition)
+
+        // 2. Rotate this vector from world-space into the camera's local-space.
+        //    We use the inverse rotation for this.
+        val targetInCameraFrameVec = Quaternion.rotateVector(
+            cameraRotation.inverted(), // <-- This is the fix
+            targetRelativeWorld.toVector3() // Convert to Vector3 for rotation
+        )
+
+        // 3. The `lookRotation` quaternion (used in VideoLocalizationManager)
+        //    creates a frame where:
+        //    +X is right, +Y is up, +Z is forward (out of the lens)
+        //
+        //    Our `cameraProject` function expects a standard computer vision frame:
+        //    +X is right, +Y is *down*, +Z is forward
+        //
+        //    Therefore, we must flip the Y-axis of the resulting vector.
+        val pointForProjection = Point3D(
+            targetInCameraFrameVec.x.toDouble(),
+            -targetInCameraFrameVec.y.toDouble(), // Flip Y from "up" to "down"
+            targetInCameraFrameVec.z.toDouble()
+        )
+
+        // 4. Project this 3D camera-space point to 2D pixels
+        //    We can reuse the existing cameraProject function
+        val screenPoint = cameraProject(
+            pointForProjection,
+            fx, fy, cx, cy
+        ) ?: return null // Return null if projection fails (e.g., behind camera)
+
+        // 5. Calculate radius based on depth (Zc)
+        val zc = pointForProjection.z // Z coordinate in camera frame is depth
+        val radius = maxOf(10.0, 500.0 / zc)
+        Log.d(TAG, "Projected Coords: u=${screenPoint.u}, v=${screenPoint.v}, r=$radius")
+
+        return ScreenCoordinates(u = screenPoint.u, v = screenPoint.v, radius = radius)
     }
 }

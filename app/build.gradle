@@ -74,6 +74,8 @@ android {
 }
 
 dependencies {
+    implementation("com.gorisse.thomas.sceneform:sceneform:1.21.0") // rendering software
+    implementation 'org.locationtech.proj4j:proj4j:1.1.5' // gps to utm conversion
     implementation("com.squareup.okhttp3:okhttp:4.12.0") // WebSocket Client library
 
     implementation project(":android-sdk-v5-uxsdk")
