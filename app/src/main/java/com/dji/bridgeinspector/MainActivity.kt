@@ -1,5 +1,6 @@
 package com.dji.bridgeinspector
 
+import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
@@ -25,7 +26,21 @@ import com.google.ar.sceneform.rendering.MaterialFactory
 import com.google.ar.sceneform.rendering.ModelRenderable
 import com.google.ar.sceneform.rendering.ShapeFactory
 import android.graphics.PixelFormat
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.SurfaceView
+import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.TextView
+import dji.sdk.keyvalue.key.CameraKey
+import dji.sdk.keyvalue.key.DJIKey
+import dji.sdk.keyvalue.value.camera.CameraMode
+import dji.sdk.keyvalue.value.common.EmptyMsg
+import dji.v5.common.callback.CommonCallbacks
+import dji.v5.common.error.IDJIError
+import dji.v5.manager.KeyManager
+import kotlin.math.PI
 
 
 open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListener {
@@ -37,7 +52,18 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListe
     private var waypointWidget: WaypointOverlayWidget? = null
     private lateinit var sceneView: SceneView
 
+    private var isSceneViewPrimary = false
+    private lateinit var viewSwapOverlay: View
+
     private lateinit var nextButton: Button // Button for cycling waypoints
+    private lateinit var distanceTextView: TextView // displays the distance from next waypoint
+
+    // Coverage Visualization variables
+    private lateinit var toggleCoverageButton: Button
+    private lateinit var coveragePercentText: TextView
+    private var isCoverageOverlayEnabled = false
+    private lateinit var coverageManager: CoverageManager
+    private lateinit var coverageMeshNode: DynamicCoverageMesh // Replaced greenNetNode
 
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -46,12 +72,9 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListe
         // Format: TargetViewpoint(lat, lon, alt, yaw, pitch, roll)
         // Alt is relative to sea level (AMSL) as used by the drone
         // Yaw/Pitch/Roll should be in radians
-        TargetViewpoint(40.114425, -88.225853, 1.0, 0.0, 0.0, 0.0),
-        TargetViewpoint(40.114425, -88.225953, 1.0, 0.0, 0.0, 0.0),
-        TargetViewpoint(40.114425, -88.226100, 1.0, 0.0, 0.0, 0.0),
-        TargetViewpoint(40.114425, -88.226300, 1.0, 0.0, 0.0, 0.0),
-        TargetViewpoint(40.114425, -88.226500, 1.0, 0.0, 0.0, 0.0),  // Viewpoint 3
-
+        TargetViewpoint(40.114464, -88.225883, 0.25, 0.0, 0.0, 0.0),
+        TargetViewpoint(40.114495, -88.225696, 0.25, -60.0, 0.0, 0.0),
+        TargetViewpoint(40.114641, -88.225689, 0.25, -90.0, 0.0, 0.0)
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,6 +90,10 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListe
         initUI()
         initSceneView()
 
+        // Initialize coverage visualization
+        coverageManager = CoverageManager(this, "model/model_with_texture.obj")
+        coverageMeshNode = DynamicCoverageMesh(this)
+
         // Read location information using locationManager
         mainScope.launch {
             (application as MyApplication).connectionState.collect { event ->
@@ -74,6 +101,33 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListe
                     is ConnectionEvent.ProductConnected -> {
                         Log.i(TAG, "Product Connected! Starting listeners.")
                         locationManager.startListening()
+
+                        // Initialize photo-taking capabilities
+                        mainScope.launch {
+                            // 1. Wait 2 seconds for the camera payload to fully boot up
+                            kotlinx.coroutines.delay(2000)
+
+                            // 2. Set the top-level mode to Photo
+                            val cameraModeKey = DJIKey.create(CameraKey.KeyCameraMode)
+                            KeyManager.getInstance().setValue(cameraModeKey, CameraMode.PHOTO_NORMAL, object : CommonCallbacks.CompletionCallback {
+                                override fun onSuccess() {
+                                    Log.i(TAG, "Successfully set camera to Photo Mode.")
+                                }
+                                override fun onFailure(error: IDJIError) {
+                                    Log.e(TAG, "Failed to set Photo Mode: ${error.errorCode()}")
+                                }
+                            })
+
+                            // 3. Explicitly tell the M3E we want to take Single shots
+                            val shootPhotoModeKey = DJIKey.create(CameraKey.KeyShootPhotoMode)
+                            KeyManager.getInstance().setValue(
+                                shootPhotoModeKey,
+                                dji.sdk.keyvalue.value.camera.CameraShootPhotoMode.NORMAL,
+                                null
+                            )
+                        }
+
+
                     }
                     is ConnectionEvent.ProductDisconnected -> {
                         Log.i(TAG, "Product Disconnected! Stopping listeners.")
@@ -93,22 +147,67 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListe
         primaryFpvWidget?.updateVideoSource(ComponentIndexType.LEFT_OR_MAIN)
         sceneView = findViewById(R.id.sceneView)
 
+        // Logic for swapping between FPV and SceneView
+        viewSwapOverlay = findViewById(R.id.view_swap_overlay)
+        primaryFpvWidget?.updateVideoSource(ComponentIndexType.LEFT_OR_MAIN)
+
         // button logic
         nextButton = findViewById(R.id.next_waypoint_button)
         nextButton.setOnClickListener {
             goToNextViewpoint()
         }
+        // displays distance to next viewpoint
+        distanceTextView = findViewById(R.id.distance_text)
+
+        // Initialize UI elements for coverage visualization
+        coveragePercentText = findViewById(R.id.coverage_percent_text)
+        toggleCoverageButton = findViewById(R.id.toggle_coverage_btn)
+
+        toggleCoverageButton.setOnClickListener {
+            isCoverageOverlayEnabled = !isCoverageOverlayEnabled
+
+            if (isCoverageOverlayEnabled) {
+                // Attach to the scene to make it visible
+                coverageMeshNode.setParent(sceneView.scene)
+
+                // Refresh the mesh with the latest data in case photos were taken while hidden
+                val coverageData = coverageManager.getCoverageData()
+                coverageMeshNode.updateMesh(coverageData)
+            } else {
+                // Detach from the scene to hide it
+                coverageMeshNode.setParent(null)
+            }
+
+            toggleCoverageButton.text = if (isCoverageOverlayEnabled) "Hide Net" else "Show Net"
+        }
+
+        val takePhotoButton = findViewById<Button>(R.id.take_photo_btn)
+        takePhotoButton.setOnClickListener {
+            val startShootKey = DJIKey.create(CameraKey.KeyStartShootPhoto)
+
+            KeyManager.getInstance().performAction(startShootKey, object : CommonCallbacks.CompletionCallbackWithParam<dji.sdk.keyvalue.value.common.EmptyMsg> {
+                override fun onSuccess(p0: EmptyMsg?) {
+                    Log.i(TAG, "Successfully captured a photo!")
+                }
+
+                override fun onFailure(error: IDJIError) {
+                    Log.e(TAG, "Failed to capture photo: ${error.description()}")
+                }
+            })
+        }
+
+        setupViewSwapping()
     }
 
     private fun initSceneView() {
         sceneView.holder.setFormat(PixelFormat.TRANSLUCENT)
-        sceneView.setZOrderOnTop(true)
+//        sceneView.setZOrderOnTop(true)
 
         sceneView.renderer?.setClearColor(com.google.ar.sceneform.rendering.Color(0.0f, 0.0f, 0.0f, 0.0f))
 
         // Original Sceneform uses a builder with callbacks to load models
         ModelRenderable.builder()
-            .setSource(this, Uri.parse("file:///android_asset/model/local_coord_mesh_building.glb"))
+            .setSource(this, Uri.parse("file:///android_asset/model/model_with_texture.glb"))
             .setIsFilamentGltf(true)
             .build()
             .thenAccept { modelRenderable ->
@@ -116,7 +215,6 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListe
                 modelNode.renderable = modelRenderable
                 sceneView.scene.addChild(modelNode)
 
-                // --- ADD THIS LIGHTING CODE ---
                 val light = Light.builder(Light.Type.DIRECTIONAL)
                     .setColor(com.google.ar.sceneform.rendering.Color(Color.WHITE)) // A bright white light
                     .setIntensity(10f) // Start with a strong intensity
@@ -200,23 +298,18 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListe
     /**
      * Receives the final calculated screen coordinates directly from LocationManager.
      */
-    override fun onScreenCoordinatesUpdated(coords: ScreenCoordinates?) {
-        // calculation is done already, just need to update UI
+    override fun onProjectionResult(result: ProjectionResult?) {
+        // Pass the entire result object (or null) to the waypoint widget
         runOnUiThread {
-            if (coords != null) {
-                // update waypoint overlay with correct coordinates and radius
-                val point = PointF(coords.u.toFloat(), coords.v.toFloat())
-                val radius = coords.radius.toFloat()
-                waypointWidget?.update(point, radius)
-                Log.d(TAG, "UI Updated with: u=${point.x}, v=${point.y}, radius=$radius")
-            } else {
-                // Optionally, hide the waypoint if the calculation fails (e.g., target is behind drone).
-                waypointWidget?.update(null, 0f)
-                Log.w(TAG, "Received null coordinates, hiding waypoint.")
-            }
+            waypointWidget?.update(result)
+            displayDistance(result)
         }
     }
 
+    // This updates strictly on the Synthetic Camera Listener (drone movement)
+    private var lastCoverageUpdateTime = 0L
+    private val UPDATE_INTERVAL_MS = 500 // Update coverage every 500ms to save performance
+    @SuppressLint("SetTextI18n")
     override fun onCameraTransformUpdated(position: Vector3, rotation: Quaternion) {
         runOnUiThread {
             // Update the SceneView's camera to match the drone's real-world pose
@@ -224,6 +317,238 @@ open class MainActivity : AppCompatActivity(), DroneDataListener, SyntheticListe
             sceneView.scene.camera.worldRotation = rotation
             Log.i(TAG, "[Synthetic] Current camera position: ${position}")
             Log.i(TAG, "[Synthetic] Recieved camera rotation: $rotation")
+//
+//            // Coverage visualization logic
+//            val currentTime = System.currentTimeMillis()
+//            if (currentTime - lastCoverageUpdateTime > UPDATE_INTERVAL_MS) {
+//                lastCoverageUpdateTime = currentTime
+//
+//                // Calculate Forward Vector from Rotation Quaternion
+//                val forward = Quaternion.rotateVector(rotation, Vector3.forward())
+//
+//                // Run math
+//                val changed = coverageManager.updateCoverage(position, forward)
+//
+//                // Update Text
+//                val percent = coverageManager.getCoveragePercentage()
+//                coveragePercentText.text = "Coverage: %.1f%%".format(percent)
+//
+//                // Update Net if enabled and data changed
+//                if (changed && isCoverageOverlayEnabled) {
+//                    val newVerts = coverageManager.getScannedVertices()
+//                    greenNetNode.updateMesh(newVerts)
+//                }
+//            }
         }
+    }
+
+    // This runs continuously based on the drone's actual live GPS
+    override fun onLiveDroneTransformUpdated(position: Vector3, rotation: Quaternion) {
+//        runOnUiThread {
+//            val currentTime = System.currentTimeMillis()
+//            if (currentTime - lastCoverageUpdateTime > UPDATE_INTERVAL_MS) {
+//                lastCoverageUpdateTime = currentTime
+//
+//                // IMPORTANT FIX: Sceneform cameras look down the -Z axis.
+//                // We must rotate the -Z vector to get the correct forward direction.
+//                val forward = Quaternion.rotateVector(rotation, Vector3(0f, 0f, -1f))
+//
+//                // Run math using the live physical drone position
+//                val changed = coverageManager.updateCoverage(position, forward)
+//
+//                // Update Text
+//                val percent = coverageManager.getCoveragePercentage()
+//                coveragePercentText.text = "Coverage: %.1f%%".format(percent)
+//
+//                // Update Net if enabled and data changed
+//                if (changed && isCoverageOverlayEnabled) {
+//                    val newVerts = coverageManager.getScannedVertices()
+//                    greenNetNode.updateMesh(newVerts)
+//                }
+//            }
+//        }
+    }
+
+    override fun onPhotoTaken(position: Vector3, rotation: Quaternion) {
+        // 1. Immediately show the Toast on the Main (UI) thread so it feels responsive
+        runOnUiThread {
+            Toast.makeText(this@MainActivity, "Photo Captured! Updating mesh...", Toast.LENGTH_SHORT).show()
+        }
+
+        // 2. Push the heavy mesh math to a background thread
+        mainScope.launch(Dispatchers.Default) {
+            val forward = Quaternion.rotateVector(rotation, Vector3(0f, 0f, -1f))
+
+            // This calculates coverage for thousands of triangles in the background
+            val changed = coverageManager.updateCoverage(position, forward)
+            val percent = coverageManager.getCoveragePercentage()
+
+            // Prepare the heavy mesh data in the background
+            val coverageData = if (changed && isCoverageOverlayEnabled) {
+                coverageManager.getCoverageData()
+            } else null
+
+            // 3. Switch back to the Main thread ONLY to update the UI and ARCore Scene
+            launch(Dispatchers.Main) {
+                coveragePercentText.text = "Coverage: %.1f%%".format(percent)
+
+                if (coverageData != null) {
+                    coverageMeshNode.updateMesh(coverageData)
+                }
+            }
+        }
+    }
+
+    fun displayDistance(result: ProjectionResult?) {
+        if (result != null) {
+            val distance = result.distanceToTarget
+            distanceTextView.text = getString(R.string.distance_format, distance)
+            distanceTextView.visibility = View.VISIBLE
+
+            // Check condition and set color
+            if (distance != null) {
+                if (distance < 2.5) {
+                    // Set to semi-transparent green
+                    distanceTextView.setBackgroundColor(Color.parseColor("#8000C853")) // 50% alpha green
+                    distanceTextView.setTextColor(Color.WHITE)
+                } else {
+                    // Set back to default semi-transparent black
+                    distanceTextView.setBackgroundColor(Color.parseColor("#80000000")) // 50% alpha black
+                    distanceTextView.setTextColor(Color.WHITE)
+                }
+            }
+        } else {
+            // No target (currentTarget is null)
+            distanceTextView.text = getString(R.string.distance_not_available)
+            distanceTextView.visibility = View.VISIBLE // Or .GONE if you prefer
+            // Reset to default colors
+            distanceTextView.setBackgroundColor(Color.parseColor("#80000000"))
+            distanceTextView.setTextColor(Color.WHITE)
+        }
+    }
+
+    private fun setupViewSwapping() {
+        // The overlay catches clicks for whatever view is currently in the bottom-right
+        viewSwapOverlay.setOnClickListener {
+            swapViews()
+        }
+    }
+
+    private fun swapViews() {
+        isSceneViewPrimary = !isSceneViewPrimary
+
+        // 1. Hide temporarily to force Android to re-draw the hardware Surface layers
+        primaryFpvWidget?.visibility = View.INVISIBLE
+        sceneView.visibility = View.INVISIBLE
+
+        // Define Layout Parameters
+        val primaryParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+
+        val margin = dpToPx(16f)
+        val secondaryParams = FrameLayout.LayoutParams(dpToPx(250f), dpToPx(150f)).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            bottomMargin = margin
+            rightMargin = margin
+        }
+
+        if (isSceneViewPrimary) {
+            sceneView.layoutParams = primaryParams
+            primaryFpvWidget?.layoutParams = secondaryParams
+
+            // FPV is Secondary: Push SceneView to background, pull FPV to overlay layer
+            setSurfaceViewOverlay(sceneView, false)
+            setSurfaceViewOverlay(primaryFpvWidget, true)
+
+            sceneView.bringToFront()
+            primaryFpvWidget?.bringToFront()
+        } else {
+            primaryFpvWidget?.layoutParams = primaryParams
+            sceneView.layoutParams = secondaryParams
+
+            // SceneView is Secondary: Push FPV to background, pull SceneView to overlay layer
+            setSurfaceViewOverlay(primaryFpvWidget, false)
+            setSurfaceViewOverlay(sceneView, true)
+
+            primaryFpvWidget?.bringToFront()
+            sceneView.bringToFront()
+        }
+
+        // 2. Show them again to apply the new Z-Order
+        primaryFpvWidget?.visibility = View.VISIBLE
+        sceneView.visibility = View.VISIBLE
+
+        // 3. Keep UI elements on the absolute top
+        restoreUiZOrder()
+    }
+
+    /**
+     * Helper: Sets the hardware z-order of a SurfaceView.
+     */
+    private fun setSurfaceViewOverlay(view: View?, isOverlay: Boolean) {
+        val surfaceView = findSurfaceView(view)
+        surfaceView?.setZOrderMediaOverlay(isOverlay)
+    }
+
+    /**
+     * Helper: Recursively searches a ViewGroup to find its underlying SurfaceView.
+     * (DJI widgets wrap their SurfaceViews inside FrameLayouts).
+     */
+    private fun findSurfaceView(view: View?): SurfaceView? {
+        if (view is SurfaceView) return view
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val child = view.getChildAt(i)
+                val result = findSurfaceView(child)
+                if (result != null) return result
+            }
+        }
+        return null
+    }
+
+    /**
+     * Re-stacks the UI elements on top of the SurfaceViews to prevent them from disappearing.
+     */
+    private fun restoreUiZOrder() {
+        val uiElevation = 20f
+
+        // Ensure the tap overlay stays directly over the secondary view
+        viewSwapOverlay.elevation = uiElevation
+        viewSwapOverlay.bringToFront()
+
+        // Bring the top-left coverage UI to the front
+        findViewById<View>(R.id.control_container).apply {
+            elevation = uiElevation
+            bringToFront()
+        }
+
+        // Bring the bottom-left next button to the front
+        nextButton.apply {
+            elevation = uiElevation
+            bringToFront()
+        }
+
+        // Bring the Waypoint arrows/lines to the front
+        waypointWidget?.apply {
+            elevation = uiElevation
+            bringToFront()
+        }
+
+        // Bring the Waypoint distance text to the front
+        distanceTextView.apply {
+            elevation = uiElevation
+            bringToFront()
+        }
+    }
+
+    // Helper to convert density-independent pixels to physical pixels
+    private fun dpToPx(dp: Float): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            dp,
+            resources.displayMetrics
+        ).toInt()
     }
 }

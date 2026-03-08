@@ -27,6 +27,12 @@ data class ScreenCoordinates(
     val radius: Double
 )
 
+data class ProjectionResult(
+    val screenCoords: ScreenCoordinates?, // Null if point is behind camera (zc <= 0)
+    val pointInCameraFrame: Point3D,        // The (x, y, z) point in camera space
+    val distanceToTarget: Double
+)
+
 // Data class for 2D pixel coordinates
 data class Point2D(val u: Double, val v: Double)
 
@@ -208,12 +214,15 @@ object WaypointProjection {
         fy: Double,
         cx: Double,
         cy: Double
-    ): ScreenCoordinates? {
+    ): ProjectionResult { // <-- Return type
         // convert target's GPS to local ENU frame relative to the drone
         val targetLocal = gpsToLocal(
             droneData.latitude, droneData.longitude, droneData.altitude,
             targetLat, targetLon, targetAlt
         )
+
+        // distance from drone to current waypoint
+        val distance = sqrt(targetLocal.x.pow(2) + targetLocal.y.pow(2) + targetLocal.z.pow(2))
 
         // transform local ENU frame to drone's body frame
         val pointDrone = worldToDrone(
@@ -224,19 +233,27 @@ object WaypointProjection {
         val pointCamera = droneToCamera(pointDrone)
 
         // project 3D camera point to 2D screen coordinates
-        val screenCoords = cameraProject(
+        val screenCoords2D = cameraProject(
             pointCamera,
             fx,
             fy,
             cx,
             cy
-        ) ?: return null // return null if projection fails
+        )
 
-        // calculate the radius based on depth (Zc), with a minimum value
-        val zc = pointCamera[2] // Z coordinate in camera frame is depth
-        val radius = maxOf(10.0, 500.0 / zc)
-        Log.i(TAG, "Screen Coordinates: ${screenCoords.u}, ${screenCoords.v}, ${radius}")
+        if (screenCoords2D != null) {
+            // Point is in front of camera, calculate radius
+            val zc = pointCamera.z // Z coordinate in camera frame is depth
+            val radius = maxOf(10.0, 500.0 / zc)
+            Log.i(TAG, "Screen Coordinates: ${screenCoords2D.u}, ${screenCoords2D.v}, ${radius}")
 
-        return ScreenCoordinates(u = screenCoords.u, v = screenCoords.v, radius = radius)
+            val finalScreenCoords = ScreenCoordinates(u = screenCoords2D.u, v = screenCoords2D.v, radius = radius)
+            // Return result with screen coords
+            return ProjectionResult(finalScreenCoords, pointCamera, distance)
+        } else {
+            // Point is behind camera (screenCoords2D is null)
+            // Return result with null screen coords
+            return ProjectionResult(null, pointCamera, distance)
+        }
     }
 }

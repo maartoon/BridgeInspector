@@ -50,16 +50,21 @@ enum class SyntheticMode {
 
 // 2. Add a listener interface
 interface DroneDataListener {
-    fun onScreenCoordinatesUpdated(coords: ScreenCoordinates?)
+    fun onProjectionResult(result: ProjectionResult?) // NEW
 }
 
 interface SyntheticListener {
     fun onCameraTransformUpdated(position: Vector3, rotation: Quaternion)
+    fun onLiveDroneTransformUpdated(position: Vector3, rotation: Quaternion)
+    fun onPhotoTaken(position: Vector3, rotation: Quaternion) // NEW LISTENER
 }
 
 class LocationManager {
 
     private val TAG = "LocationManager"
+
+    private val MODEL_OFFSET_X = 4.98f
+    private val MODEL_OFFSET_Y = 82.48f
 
     var listener: DroneDataListener? = null // Add a listener property
     var syntheticListener: SyntheticListener? = null // Add a listener property
@@ -83,7 +88,7 @@ class LocationManager {
     // Target CRS: UTM Zone 16N
     private val utm16n: CoordinateReferenceSystem = csFactory.createFromName("EPSG:32616")
     private val wgsToUtm: CoordinateTransform = ctFactory.createTransform(wgs84, utm16n)
-    private val originUTM = doubleArrayOf(395535.05, 4441177.50, 5.0)
+    private val originUTM = doubleArrayOf(395535.14, 4441177.50, 197.5)
     // listen for drone updates
     fun startListening() {
         // gps information - lat, long, alt
@@ -98,6 +103,9 @@ class LocationManager {
         // debugging: checking for gps signal
         val satelliteCountKey = DJIKey.create(FlightControllerKey.KeyGPSSatelliteCount)
         val gpsSignalKey = DJIKey.create(FlightControllerKey.KeyGPSSignalLevel)
+
+        // media file key (to observe when user takes an image)
+        val mediaFileKey = DJIKey.create(CameraKey.KeyNewlyGeneratedMediaFile)
 
         KeyManager.getInstance().listen(gpsSignalKey, this) { _, gpsSignal ->
             Log.i(TAG, "GPS Signal: $gpsSignal")
@@ -156,6 +164,36 @@ class LocationManager {
                 Log.i(TAG, "Gimbal Attitude: Pitch: $latestPitch, Roll: $latestRoll")
             }
         }
+
+        // Listen for new image generation
+        KeyManager.getInstance().listen(mediaFileKey, this) { _, newMedia ->
+            newMedia?.let {
+                Log.i(TAG, "New media file generated! Capturing pose for coverage mapping.")
+
+                // Grab the pose exactly when the photo event happens
+                val lat = latestLatitude ?: return@listen
+                val lon = latestLongitude ?: return@listen
+                val alt = latestAltitude ?: return@listen
+                val yaw = latestYaw ?: return@listen
+                val pitch = latestPitch ?: return@listen
+                val roll = latestRoll ?: return@listen
+
+                val droneUTM = gpsToUtm(lat, lon)
+                val cameraX = (droneUTM[0] - originUTM[0]).toFloat()
+                val cameraY = (droneUTM[1] - originUTM[1]).toFloat()
+                val cameraZ = (alt + originUTM[2]).toFloat()
+                val localPosition =
+                    Vector3(cameraX - MODEL_OFFSET_X, cameraY - MODEL_OFFSET_Y, cameraZ)
+
+                val localRotation =
+                    Quaternion.eulerAngles(Vector3(pitch.toFloat(), -yaw.toFloat(), roll.toFloat()))
+                val preRotation = Quaternion.axisAngle(Vector3.right(), 90f)
+                val finalRotation = Quaternion.multiply(preRotation, localRotation)
+
+                // Pass this highly specific pose to the listener
+                syntheticListener?.onPhotoTaken(localPosition, finalRotation)
+            }
+        }
     }
 
     private fun publishData() {
@@ -168,21 +206,26 @@ class LocationManager {
 
         // Convert UTM location to the local coordinates of the model
         // Synthetic video mode: camera's movement directly follows that of the drone
-        if (syntheticMode == SyntheticMode.FOLLOW_DRONE && syntheticListener != null && yaw != null && pitch != null && roll != null) {
+        if (syntheticListener != null && yaw != null && pitch != null && roll != null) {
             val droneUTM = gpsToUtm(lat, lon) // Placeholder
 
             val cameraX = (droneUTM[0] - originUTM[0]).toFloat()
             val cameraY = (droneUTM[1] - originUTM[1]).toFloat()
             val cameraZ = (alt + originUTM[2]).toFloat()
-            val localPosition = Vector3(cameraX, cameraY, cameraZ)
+            val localPosition = Vector3(cameraX - MODEL_OFFSET_X, cameraY - MODEL_OFFSET_Y, cameraZ)
 
             // may need modification depending on the model
             val localRotation = Quaternion.eulerAngles(Vector3(pitch.toFloat(), -yaw.toFloat(), roll.toFloat()))
             val preRotation = Quaternion.axisAngle(Vector3.right(), 90f)
             val finalRotation = Quaternion.multiply(preRotation, localRotation)
 
-            // Notify the 3D listener
-            syntheticListener?.onCameraTransformUpdated(localPosition, finalRotation)
+            // 1. ALWAYS send the live physical drone position to the CoverageManager
+            syntheticListener?.onLiveDroneTransformUpdated(localPosition, finalRotation)
+
+            // 2. ONLY move the visual SceneView camera to follow the drone if in FOLLOW_DRONE mode
+            if (syntheticMode == SyntheticMode.FOLLOW_DRONE) {
+                syntheticListener?.onCameraTransformUpdated(localPosition, finalRotation)
+            }
         }
 
         // Pass information from drone for waypoint calculations
@@ -193,7 +236,7 @@ class LocationManager {
             val target = currentTarget
             if (target == null) {
                 Log.w(TAG, "No target viewpoint set. Waypoint projection skipped.")
-                listener?.onScreenCoordinatesUpdated(null) // Hide waypoint
+                listener?.onProjectionResult(null) // Hide waypoint
                 return // No target, so skip calculation
             }
 
@@ -209,17 +252,17 @@ class LocationManager {
             val cy = screenHeight / 2
 
             // perform calulation using waypoint projection
-            val screenCoordinates = WaypointProjection.processDroneData(
+            val projectionResult = WaypointProjection.processDroneData(
                 droneData, targetLat, targetLon, targetAlt, fx, fy, cx, cy
             )
 
             // pass result to listener
-            if (screenCoordinates != null) {
-                Log.i(TAG, "Calculation successful: u=${screenCoordinates.u}, v=${screenCoordinates.v}, radius=${screenCoordinates.radius}")
+            if (projectionResult.screenCoords != null) {
+                Log.i(TAG, "Calculation successful: u=${projectionResult.screenCoords.u}, v=${projectionResult.screenCoords.v}, radius=${projectionResult.screenCoords.radius}")
             } else {
-                Log.w(TAG, "Calculation failed. Point may be behind camera.")
+                Log.i(TAG, "Point may be behind camera.")
             }
-            listener?.onScreenCoordinatesUpdated(screenCoordinates)
+            listener?.onProjectionResult(projectionResult)
         }
     }
 
@@ -247,15 +290,20 @@ class LocationManager {
         val cameraY = (targetUTM[1] - originUTM[1]).toFloat()
         // Use target's altitude for Z position in the synthetic world
         val cameraZ = (target.altitude + originUTM[2]).toFloat()
-        val localPosition = Vector3(cameraX, cameraY, cameraZ)
+        val localPosition = Vector3(cameraX - MODEL_OFFSET_X, cameraY - MODEL_OFFSET_Y, cameraZ)
 
         // Use target's orientation
         val localRotation = Quaternion.eulerAngles(Vector3(target.pitch.toFloat(), -target.yaw.toFloat(), target.roll.toFloat()))
         val preRotation = Quaternion.axisAngle(Vector3.right(), 90f) // Keep the pre-rotation if it's needed for model orientation
         val finalRotation = Quaternion.multiply(preRotation, localRotation)
 
-        // Notify the 3D listener to update the camera
         syntheticListener?.onCameraTransformUpdated(localPosition, finalRotation)
+
+//
+//        // Only move the visual camera if we are in Follow Drone mode
+//        if (syntheticMode == SyntheticMode.FOLLOW_DRONE) {
+//            syntheticListener?.onCameraTransformUpdated(localPosition, finalRotation)
+//        }
     }
 
     /**
